@@ -1,0 +1,57 @@
+[package]
+name = "football-coach-poc"
+version = "0.1.0"
+edition = "2021"
+authors = ["Football Coach PoC Team"]
+description = "A desktop football (soccer) tactical analysis application"
+license = "MIT"
+
+[dependencies]
+# GUI Framework
+eframe = { version = "0.31", features = ["default"] }
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["image"] }
+egui_plot = "0.31"
+
+# Video Processing
+ffmpeg-next = "8.1"
+
+# ONNX Runtime for YOLO inference
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["std", "ndarray", "download-binaries", "copy-dylibs", "api-24", "tls-native"] }
+ndarray = "0.17"
+
+# Image handling
+image = "0.25"
+
+# Linear algebra (homography, Kalman filter)
+nalgebra = "0.33"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Concurrency
+crossbeam-channel = "0.5"
+rayon = "1.10"
+parking_lot = "0.12"
+
+# Misc
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rfd = "0.15"          # Native file dialogs
+dirs = "5.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[profile.dev]
+opt-level = 1          # Faster debug builds for video work

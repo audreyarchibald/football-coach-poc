@@ -1,0 +1,13 @@
+target/
+
+# Local media / downloads
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
