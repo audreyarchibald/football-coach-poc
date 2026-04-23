@@ -1210,11 +1210,17 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
             .heading()
             .color(colors::ACCENT),
     );
+
+    let ts_text = app
+        .current_frame()
+        .map(|f| format!("t = {:.2}s  |  frame {}", f.timestamp_secs, f.index + 1))
+        .unwrap_or_else(|| "no frame loaded".to_string());
     ui.label(
-        egui::RichText::new(
+        egui::RichText::new(format!(
             "Top-left: full tactical view.  Top-right: ball zoom.  \
-             Bottom-left: weakest-player zoom.  Bottom-right: top-down pitch.",
-        )
+             Bottom-left: weakest-player zoom.  Bottom-right: top-down pitch.   ({})",
+            ts_text
+        ))
         .color(colors::TEXT_SECONDARY)
         .small(),
     );
@@ -1243,12 +1249,12 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
             .map(|t| t.bbox)
     });
 
-    // Find weakest player id and their bbox
-    let weakest_id = app
+    // Find weakest player and their bbox
+    let weakest = app
         .metrics
         .as_ref()
-        .and_then(|m| m.match_analysis.weakest_players.first())
-        .map(|w| w.track_id);
+        .and_then(|m| m.match_analysis.weakest_players.first());
+    let weakest_id = weakest.map(|w| w.track_id);
     let weakest_bbox = frame_tracks.and_then(|ft| {
         let id = weakest_id?;
         ft.tracks
@@ -1256,6 +1262,32 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
             .find(|t| t.track_id == id)
             .map(|t| t.bbox)
     });
+
+    let coach = app.metrics.as_ref().map(|m| &m.coach_metrics);
+
+    // Sub-labels
+    let ball_label = match ball_bbox {
+        Some(b) => format!(
+            "Ball zoom  ({:.0}, {:.0} px)",
+            (b.x1 + b.x2) * 0.5,
+            (b.y1 + b.y2) * 0.5
+        ),
+        None => "Ball zoom  (not visible)".to_string(),
+    };
+
+    let weakest_label = match weakest {
+        Some(w) => {
+            let team_txt = match (w.team, coach) {
+                (Some(t), Some(c)) => format!("  [{}]", team_label(t, c)),
+                _ => String::new(),
+            };
+            format!(
+                "Weakest player #{}{}  —  weakness {:.2}",
+                w.track_id, team_txt, w.weakness
+            )
+        }
+        None => "Weakest player (n/a)".to_string(),
+    };
 
     // --- Row 1 ---
     ui.horizontal(|ui| {
@@ -1265,26 +1297,55 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
             "Full view",
             texture,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            frame_tracks,
+            tex_size,
+            coach,
+            Highlight {
+                ball: ball_bbox.is_some(),
+                weakest_id,
+            },
         );
         ui.add_space(8.0);
         let uv = ball_bbox
             .map(|b| bbox_to_uv(b, tex_size, 4.0))
             .unwrap_or_else(|| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)));
-        draw_frame_cell(ui, cell_size, "Ball zoom", texture, uv);
+        draw_frame_cell(
+            ui,
+            cell_size,
+            &ball_label,
+            texture,
+            uv,
+            frame_tracks,
+            tex_size,
+            coach,
+            Highlight {
+                ball: true,
+                weakest_id: None,
+            },
+        );
     });
 
     ui.add_space(8.0);
 
     // --- Row 2 ---
     ui.horizontal(|ui| {
-        let label = match weakest_id {
-            Some(id) => format!("Weakest player #{}", id),
-            None => "Weakest player (n/a)".to_string(),
-        };
         let uv = weakest_bbox
             .map(|b| bbox_to_uv(b, tex_size, 3.0))
             .unwrap_or_else(|| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)));
-        draw_frame_cell(ui, cell_size, &label, texture, uv);
+        draw_frame_cell(
+            ui,
+            cell_size,
+            &weakest_label,
+            texture,
+            uv,
+            frame_tracks,
+            tex_size,
+            coach,
+            Highlight {
+                ball: false,
+                weakest_id,
+            },
+        );
         ui.add_space(8.0);
 
         // Pitch map cell
@@ -1297,7 +1358,6 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
                         .color(colors::TEXT_SECONDARY)
                         .small(),
                 );
-                let coach = app.metrics.as_ref().map(|m| &m.coach_metrics);
                 super::pitch_overlay::draw_pitch_overlay(
                     ui,
                     frame_tracks,
@@ -1307,6 +1367,12 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
             },
         );
     });
+}
+
+#[derive(Copy, Clone, Default)]
+struct Highlight {
+    ball: bool,
+    weakest_id: Option<u32>,
 }
 
 fn bbox_to_uv(
@@ -1329,12 +1395,17 @@ fn bbox_to_uv(
     egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_frame_cell(
     ui: &mut egui::Ui,
     size: egui::Vec2,
     label: &str,
     texture: Option<&egui::TextureHandle>,
     uv: egui::Rect,
+    frame_tracks: Option<&crate::tracker::FrameTracks>,
+    tex_size: egui::Vec2,
+    coach: Option<&CoachMetrics>,
+    highlight: Highlight,
 ) {
     ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::LEFT), |ui| {
         ui.label(
@@ -1359,6 +1430,88 @@ fn draw_frame_cell(
                 colors::TEXT_SECONDARY,
             );
         }
+
+        // Draw per-track overlays projected through the current UV
+        if let Some(ft) = frame_tracks {
+            let team_color_for = |team: TeamId| -> egui::Color32 {
+                if let Some(c) = coach {
+                    if let Some((r, g, b)) = crate::metrics::coach::team_display_rgb(team, c) {
+                        return egui::Color32::from_rgb(r, g, b);
+                    }
+                }
+                match team {
+                    TeamId::TeamA => colors::PLAYER_TEAM_A,
+                    TeamId::TeamB => colors::PLAYER_TEAM_B,
+                }
+            };
+
+            for track in &ft.tracks {
+                // Project texture-pixel coords through UV window into cell rect.
+                let proj = project_bbox(track.bbox, tex_size, uv, rect);
+                let Some(pr) = proj else {
+                    continue;
+                };
+                if pr.width() < 2.0 || pr.height() < 2.0 {
+                    continue;
+                }
+
+                if track.class_id == COCO_SPORTS_BALL {
+                    let color = colors::BALL_COLOR;
+                    painter.rect_stroke(
+                        pr,
+                        1.0,
+                        egui::Stroke::new(1.5, color),
+                        egui::StrokeKind::Outside,
+                    );
+                    if highlight.ball {
+                        // reticle
+                        painter.circle_stroke(
+                            pr.center(),
+                            (pr.width().max(pr.height()) * 0.8).max(10.0),
+                            egui::Stroke::new(1.0, color.gamma_multiply(0.6)),
+                        );
+                    }
+                    continue;
+                }
+
+                let team = coach
+                    .and_then(|c| c.team_assignments.get(&track.track_id))
+                    .copied();
+                let color = match team {
+                    Some(t) => team_color_for(t),
+                    None => colors::TEXT_PRIMARY,
+                };
+
+                let is_weakest = highlight.weakest_id == Some(track.track_id);
+                let stroke_w = if is_weakest { 2.5 } else { 1.25 };
+                painter.rect_stroke(
+                    pr,
+                    1.0,
+                    egui::Stroke::new(stroke_w, color),
+                    egui::StrokeKind::Outside,
+                );
+                if is_weakest {
+                    painter.rect_stroke(
+                        pr.expand(3.0),
+                        2.0,
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 200, 60)),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+
+                // ID label, only show if room
+                if pr.width() > 24.0 {
+                    painter.text(
+                        pr.left_top() + egui::vec2(2.0, -2.0),
+                        egui::Align2::LEFT_BOTTOM,
+                        format!("#{}", track.track_id),
+                        egui::FontId::monospace(9.0),
+                        color,
+                    );
+                }
+            }
+        }
+
         painter.rect_stroke(
             rect,
             2.0,
@@ -1366,4 +1519,37 @@ fn draw_frame_cell(
             egui::StrokeKind::Outside,
         );
     });
+}
+
+/// Project a bbox in texture-pixel coordinates onto a screen rect given
+/// the UV window currently displayed in that rect. Returns None if the
+/// bbox lies fully outside the visible UV window.
+fn project_bbox(
+    bbox: crate::detection::BBox,
+    tex_size: egui::Vec2,
+    uv: egui::Rect,
+    rect: egui::Rect,
+) -> Option<egui::Rect> {
+    let tw = tex_size.x.max(1.0);
+    let th = tex_size.y.max(1.0);
+    let u1 = bbox.x1 / tw;
+    let v1 = bbox.y1 / th;
+    let u2 = bbox.x2 / tw;
+    let v2 = bbox.y2 / th;
+    let uv_w = (uv.max.x - uv.min.x).max(1e-6);
+    let uv_h = (uv.max.y - uv.min.y).max(1e-6);
+    // Reject if fully outside the UV window (with small margin).
+    if u2 < uv.min.x || u1 > uv.max.x || v2 < uv.min.y || v1 > uv.max.y {
+        return None;
+    }
+    let to_x = |u: f32| rect.left() + ((u - uv.min.x) / uv_w) * rect.width();
+    let to_y = |v: f32| rect.top() + ((v - uv.min.y) / uv_h) * rect.height();
+    let x1 = to_x(u1 as f32).clamp(rect.left(), rect.right());
+    let y1 = to_y(v1 as f32).clamp(rect.top(), rect.bottom());
+    let x2 = to_x(u2 as f32).clamp(rect.left(), rect.right());
+    let y2 = to_y(v2 as f32).clamp(rect.top(), rect.bottom());
+    Some(egui::Rect::from_min_max(
+        egui::pos2(x1.min(x2), y1.min(y2)),
+        egui::pos2(x1.max(x2), y1.max(y2)),
+    ))
 }
