@@ -216,6 +216,151 @@ pub fn generate_text_report(
         }
     }
 
+    // ── MATCH PLAN ────────────────────────────────────────────────────────────
+    let ma = &metrics.match_analysis;
+
+    report.push_str("\n── MATCH PLAN: POSSESSION ────────────────────\n\n");
+    if ma.possession.teams.is_empty() {
+        report.push_str("No possession samples recorded.\n");
+    } else {
+        report.push_str(&format!(
+            "Total sampled: {:.1}s\n",
+            ma.possession.total_sampled_secs
+        ));
+        for tp in &ma.possession.teams {
+            report.push_str(&format!(
+                "\n{} — {:.1}s ({:.1}%)\n",
+                tp.team, tp.time_secs, tp.share_pct
+            ));
+            report.push_str("  Thirds:");
+            for third in [
+                crate::metrics::match_analysis::PitchThird::Defensive,
+                crate::metrics::match_analysis::PitchThird::Middle,
+                crate::metrics::match_analysis::PitchThird::Attacking,
+            ] {
+                let t = tp.third_time_secs.get(&third).copied().unwrap_or(0.0);
+                report.push_str(&format!("  {} {:.1}s", third, t));
+            }
+            report.push('\n');
+            report.push_str("  Lanes: ");
+            for lane in [
+                crate::metrics::match_analysis::PitchLane::Left,
+                crate::metrics::match_analysis::PitchLane::Central,
+                crate::metrics::match_analysis::PitchLane::Right,
+            ] {
+                let t = tp.lane_time_secs.get(&lane).copied().unwrap_or(0.0);
+                report.push_str(&format!("  {} {:.1}s", lane, t));
+            }
+            report.push('\n');
+            report.push_str(&format!(
+                "  Switches: {} | Avg switch: {:.1}s | Longest same-side: {:.1}s\n",
+                tp.switch_count, tp.avg_switch_time_secs, tp.longest_same_side_stretch_secs
+            ));
+        }
+    }
+
+    report.push_str("\n── MATCH PLAN: CROSSING ──────────────────────\n\n");
+    if ma.crossing.events.is_empty() {
+        report.push_str("No crosses detected.\n");
+    } else {
+        for team in [
+            crate::metrics::coach::TeamId::TeamA,
+            crate::metrics::coach::TeamId::TeamB,
+        ] {
+            let n = ma.crossing.by_team.get(&team).copied().unwrap_or(0);
+            report.push_str(&format!("- {}: {} crosses\n", team, n));
+        }
+        report.push('\n');
+        report.push_str("  Time  | Team | Side  | Origin        | Atk/Def | Zones\n");
+        report.push_str("  ──────|──────|───────|───────────────|─────────|──────\n");
+        for ev in ma.crossing.events.iter().take(20) {
+            let mut zones: Vec<String> =
+                ev.attacker_zones.iter().map(|z| z.to_string()).collect();
+            zones.sort();
+            report.push_str(&format!(
+                "  {:>5.1}s| {:<5}| {:<6}| {:>5.1},{:>5.1}  |  {} vs {}  | {}\n",
+                ev.timestamp_secs,
+                ev.attacking_team.to_string(),
+                ev.side,
+                ev.origin.x,
+                ev.origin.y,
+                ev.attackers_in_box,
+                ev.defenders_in_box,
+                zones.join(",")
+            ));
+        }
+    }
+
+    report.push_str("\n── MATCH PLAN: RUNNING ───────────────────────\n\n");
+    if ma.running.players.is_empty() {
+        report.push_str("No running data.\n");
+    } else {
+        for tr in &ma.running.teams {
+            report.push_str(&format!(
+                "- {} | {:.0} m total | HSR {:.1}s | {} sprints | {} players\n",
+                tr.team,
+                tr.total_distance_m,
+                tr.high_speed_run_secs,
+                tr.sprint_count,
+                tr.players_counted
+            ));
+        }
+        report.push('\n');
+        report.push_str("  ID   | Team | Dist(m) | HSR(s) | Sprints | Max(km/h)\n");
+        report.push_str("  ─────|──────|─────────|────────|─────────|──────────\n");
+        for p in ma.running.players.iter().take(20) {
+            let team = p
+                .team
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "—".to_string());
+            report.push_str(&format!(
+                "  #{:<4}| {:<5}| {:<7.0} | {:<6.1} | {:<7} | {:<8.1}\n",
+                p.track_id,
+                team,
+                p.total_distance_m,
+                p.high_speed_run_secs,
+                p.sprint_count,
+                p.max_speed_kmh
+            ));
+        }
+    }
+
+    report.push_str("\n── MATCH PLAN: WEAKEST PLAYERS ───────────────\n\n");
+    if ma.weakest_players.is_empty() {
+        report.push_str("Not enough data to rank weakest players.\n");
+    } else {
+        report.push_str(
+            "Composite: low activity (30%), low speed (20%), turnovers (25%), 1v1 losses (25%).\n\n",
+        );
+        report.push_str(
+            "  Rank | ID   | Team | Weak | Turnovers | Duel loss | Notes\n",
+        );
+        report.push_str(
+            "  ─────|──────|──────|──────|───────────|───────────|──────\n",
+        );
+        for (i, w) in ma.weakest_players.iter().take(10).enumerate() {
+            let team = w
+                .team
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "—".to_string());
+            let notes = if w.notes.is_empty() {
+                "".to_string()
+            } else {
+                w.notes.clone()
+            };
+            report.push_str(&format!(
+                "  {:<4} | #{:<4}| {:<5}| {:<4.2} | {:<9.2} | {:<9.2} | {}\n",
+                i + 1,
+                w.track_id,
+                team,
+                w.weakness,
+                w.turnover_factor,
+                w.duel_loss_factor,
+                notes
+            ));
+        }
+    }
+
     report.push_str("\nNotes: Automatic pitch awareness is used when the software can confidently see the field shape and lines.\n");
     report.push_str("\n═══════════════════════════════════════════════\n");
     report

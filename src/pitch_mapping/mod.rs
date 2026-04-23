@@ -366,11 +366,18 @@ impl PitchMapper {
 
 /// Compute 3x3 homography using DLT with 4 point correspondences
 fn compute_homography(src: &[Point2D; 4], dst: &[Point2D; 4]) -> Result<Matrix3<f64>> {
-    let mut a = nalgebra::DMatrix::<f64>::zeros(8, 9);
+    // Use a 9x9 matrix (8 DLT rows + 1 zero row) so the SVD's V^T is 9x9
+    // and we can safely take row(8) as the null-space vector. With nalgebra's
+    // thin SVD on an 8x9 matrix, V^T would only be 8x9 and row(8) panics.
+    let mut a = nalgebra::DMatrix::<f64>::zeros(9, 9);
 
     for i in 0..4 {
         let (sx, sy) = (src[i].x, src[i].y);
         let (dx, dy) = (dst[i].x, dst[i].y);
+
+        if !sx.is_finite() || !sy.is_finite() || !dx.is_finite() || !dy.is_finite() {
+            return Err(anyhow::anyhow!("Non-finite point in homography input"));
+        }
 
         let row1 = i * 2;
         let row2 = i * 2 + 1;
@@ -392,6 +399,13 @@ fn compute_homography(src: &[Point2D; 4], dst: &[Point2D; 4]) -> Result<Matrix3<
 
     let svd = a.svd(true, true);
     let v_t = svd.v_t.ok_or_else(|| anyhow::anyhow!("SVD failed"))?;
+    if v_t.nrows() < 9 || v_t.ncols() < 9 {
+        return Err(anyhow::anyhow!(
+            "SVD returned unexpected V^T shape: {}x{}",
+            v_t.nrows(),
+            v_t.ncols()
+        ));
+    }
     let h_vec = v_t.row(8);
 
     let h = Matrix3::new(
@@ -399,7 +413,7 @@ fn compute_homography(src: &[Point2D; 4], dst: &[Point2D; 4]) -> Result<Matrix3<
     );
 
     let scale = h[(2, 2)];
-    if scale.abs() < 1e-10 {
+    if !scale.is_finite() || scale.abs() < 1e-10 {
         return Err(anyhow::anyhow!("Degenerate homography"));
     }
 

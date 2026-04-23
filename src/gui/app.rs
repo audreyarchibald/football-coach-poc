@@ -56,6 +56,8 @@ enum AnalysisMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalysisTab {
     Coach,
+    MatchPlan,
+    FourView,
     Tracking,
     Heatmaps,
     PitchView,
@@ -463,7 +465,7 @@ impl CoachApp {
             editing_corners: false,
             selected_reference_point: 0,
 
-            active_tab: AnalysisTab::Insights,
+            active_tab: AnalysisTab::MatchPlan,
             show_bboxes: true,
             show_trails: true,
             show_ids: true,

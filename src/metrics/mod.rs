@@ -2,6 +2,7 @@
 
 pub mod coach;
 pub mod heatmap;
+pub mod match_analysis;
 pub mod movement;
 pub mod possession;
 pub mod pressing;
@@ -24,6 +25,7 @@ pub struct ClipMetrics {
     pub player_area_occupancy: HashMap<u32, HashMap<PitchArea, u32>>,
     pub dominant_areas: HashMap<u32, PitchArea>,
     pub coach_metrics: coach::CoachMetrics,
+    pub match_analysis: match_analysis::MatchAnalysis,
     pub duration_secs: f64,
     pub total_frames: u64,
 }
@@ -64,6 +66,13 @@ pub fn compute_all_metrics(
     let (player_area_occupancy, dominant_areas) = compute_area_occupancy(&player_positions);
     let coach_metrics =
         coach::compute_coach_metrics(tracking, mapper, frames, &player_positions, &dominant_areas);
+    let match_analysis = match_analysis::compute_match_analysis(
+        tracking,
+        mapper,
+        &player_positions,
+        &player_metrics,
+        &coach_metrics,
+    );
 
     let duration = tracking
         .frame_tracks
@@ -80,6 +89,7 @@ pub fn compute_all_metrics(
         player_area_occupancy,
         dominant_areas,
         coach_metrics,
+        match_analysis,
         duration_secs: duration,
         total_frames,
     }
