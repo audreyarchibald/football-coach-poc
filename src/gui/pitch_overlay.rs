@@ -2,7 +2,7 @@
 
 use super::colors;
 use crate::detection::COCO_SPORTS_BALL;
-use crate::metrics::coach::TeamId;
+use crate::metrics::coach::{team_display_rgb, CoachMetrics, TeamId};
 use crate::pitch_mapping::{PITCH_LENGTH, PITCH_WIDTH};
 use crate::tracker::FrameTracks;
 use eframe::egui;
@@ -12,7 +12,7 @@ pub fn draw_pitch_overlay(
     ui: &mut egui::Ui,
     frame_tracks: Option<&FrameTracks>,
     mapper: Option<&crate::pitch_mapping::PitchMapper>,
-    team_assignments: Option<&std::collections::HashMap<u32, TeamId>>,
+    coach: Option<&CoachMetrics>,
 ) {
     let available_width = ui.available_width().min(380.0);
     let pitch_aspect = PITCH_LENGTH as f32 / PITCH_WIDTH as f32;
@@ -29,6 +29,18 @@ pub fn draw_pitch_overlay(
     // Pitch lines (same as heatmap)
     draw_pitch_lines_full(&painter, rect);
 
+    let team_color = |team: TeamId| -> egui::Color32 {
+        if let Some(c) = coach {
+            if let Some((r, g, b)) = team_display_rgb(team, c) {
+                return egui::Color32::from_rgb(r, g, b);
+            }
+        }
+        match team {
+            TeamId::TeamA => colors::PLAYER_TEAM_A,
+            TeamId::TeamB => colors::PLAYER_TEAM_B,
+        }
+    };
+
     // Draw player positions
     if let (Some(ft), Some(mapper)) = (frame_tracks, mapper) {
         for track in &ft.tracks {
@@ -42,9 +54,11 @@ pub fn draw_pitch_overlay(
             if track.class_id == COCO_SPORTS_BALL {
                 painter.circle_filled(egui::pos2(sx, sy), 4.0, colors::BALL_COLOR);
             } else {
-                let color = match team_assignments.and_then(|teams| teams.get(&track.track_id)) {
-                    Some(TeamId::TeamA) => colors::PLAYER_TEAM_A,
-                    Some(TeamId::TeamB) => colors::PLAYER_TEAM_B,
+                let team = coach
+                    .and_then(|c| c.team_assignments.get(&track.track_id))
+                    .copied();
+                let color = match team {
+                    Some(t) => team_color(t),
                     None => colors::TEXT_PRIMARY,
                 };
                 painter.circle_filled(egui::pos2(sx, sy), 6.0, color);

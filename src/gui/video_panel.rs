@@ -3,6 +3,7 @@
 use super::app::CoachApp;
 use super::colors;
 use crate::detection::COCO_SPORTS_BALL;
+use crate::metrics::coach::{team_display_rgb, TeamId};
 use eframe::egui;
 
 pub fn show(app: &mut CoachApp, ui: &mut egui::Ui, _ctx: &egui::Context) {
@@ -113,13 +114,30 @@ fn draw_detections(app: &CoachApp, ui: &egui::Ui, rect: egui::Rect, tex_size: eg
             .iter()
             .find(|ft| ft.frame_index == frame_idx)
         {
+            let coach = app.metrics.as_ref().map(|m| &m.coach_metrics);
+            let team_color_for = |team: TeamId| -> egui::Color32 {
+                if let Some(c) = coach {
+                    if let Some((r, g, b)) = team_display_rgb(team, c) {
+                        return egui::Color32::from_rgb(r, g, b);
+                    }
+                }
+                match team {
+                    TeamId::TeamA => colors::PLAYER_TEAM_A,
+                    TeamId::TeamB => colors::PLAYER_TEAM_B,
+                }
+            };
+
             for track in &ft.tracks {
                 let color = if track.class_id == COCO_SPORTS_BALL {
                     colors::BALL_COLOR
-                } else if track.track_id % 2 == 0 {
-                    colors::PLAYER_TEAM_A
                 } else {
-                    colors::PLAYER_TEAM_B
+                    let team = coach
+                        .and_then(|c| c.team_assignments.get(&track.track_id))
+                        .copied();
+                    match team {
+                        Some(t) => team_color_for(t),
+                        None => colors::TEXT_PRIMARY,
+                    }
                 };
 
                 draw_bbox(

@@ -744,33 +744,37 @@ fn show_pitch_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
         return;
     }
 
-    let team_assignments = app
-        .metrics
-        .as_ref()
-        .map(|m| &m.coach_metrics.team_assignments);
-    super::pitch_overlay::draw_pitch_overlay(ui, frame_tracks, mapper, team_assignments);
+    let coach = app.metrics.as_ref().map(|m| &m.coach_metrics);
+    super::pitch_overlay::draw_pitch_overlay(ui, frame_tracks, mapper, coach);
 
     // Legend
     ui.add_space(12.0);
-    let (label_a, label_b) = match app.metrics.as_ref() {
+    let (label_a, label_b, color_a, color_b) = match app.metrics.as_ref() {
         Some(m) => (
             team_label(TeamId::TeamA, &m.coach_metrics),
             team_label(TeamId::TeamB, &m.coach_metrics),
+            team_color(TeamId::TeamA, &m.coach_metrics),
+            team_color(TeamId::TeamB, &m.coach_metrics),
         ),
-        None => ("Team A".to_string(), "Team B".to_string()),
+        None => (
+            "Team A".to_string(),
+            "Team B".to_string(),
+            colors::PLAYER_TEAM_A,
+            colors::PLAYER_TEAM_B,
+        ),
     };
     ui.horizontal(|ui| {
         let dot_size = 8.0;
         let (rect_a, _) =
             ui.allocate_exact_size(egui::vec2(dot_size, dot_size), egui::Sense::hover());
         ui.painter()
-            .circle_filled(rect_a.center(), dot_size / 2.0, colors::PLAYER_TEAM_A);
+            .circle_filled(rect_a.center(), dot_size / 2.0, color_a);
         ui.label(&label_a);
         ui.add_space(8.0);
         let (rect_b, _) =
             ui.allocate_exact_size(egui::vec2(dot_size, dot_size), egui::Sense::hover());
         ui.painter()
-            .circle_filled(rect_b.center(), dot_size / 2.0, colors::PLAYER_TEAM_B);
+            .circle_filled(rect_b.center(), dot_size / 2.0, color_b);
         ui.label(&label_b);
         ui.add_space(8.0);
         let (rect_ball, _) =
@@ -856,12 +860,12 @@ fn show_possession_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut eg
         painter.rect_filled(
             egui::Rect::from_min_max(rect.left_top(), egui::pos2(split_x, rect.bottom())),
             2.0,
-            colors::PLAYER_TEAM_A,
+            team_color(TeamId::TeamA, coach),
         );
         painter.rect_filled(
             egui::Rect::from_min_max(egui::pos2(split_x, rect.top()), rect.right_bottom()),
             2.0,
-            colors::PLAYER_TEAM_B,
+            team_color(TeamId::TeamB, coach),
         );
         painter.text(
             rect.left_center() + egui::vec2(8.0, 0.0),
@@ -890,7 +894,7 @@ fn show_possession_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut eg
                     tp.share_pct
                 ))
                 .strong()
-                .color(team_color(tp.team)),
+                .color(team_color(tp.team, coach)),
             );
 
             // Thirds
@@ -940,7 +944,7 @@ fn show_crossing_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui
                 ui.label(
                     egui::RichText::new(format!("{}: {} crosses", team_label(team, coach), n))
                         .strong()
-                        .color(team_color(team)),
+                        .color(team_color(team, coach)),
                 );
             }
         });
@@ -964,7 +968,7 @@ fn show_crossing_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui
                     ui.label(format!("{:.1}s", ev.timestamp_secs));
                     ui.label(
                         egui::RichText::new(team_label(ev.attacking_team, coach))
-                            .color(team_color(ev.attacking_team)),
+                            .color(team_color(ev.attacking_team, coach)),
                     );
                     ui.label(ev.side.to_string());
                     ui.label(format!("{:.1}, {:.1}", ev.origin.x, ev.origin.y));
@@ -1029,7 +1033,7 @@ fn show_running_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui:
                     tr.players_counted
                 ))
                 .strong()
-                .color(team_color(tr.team)),
+                .color(team_color(tr.team, coach)),
             );
         }
         ui.add_space(6.0);
@@ -1051,7 +1055,7 @@ fn show_running_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui:
                     ui.label(format!("#{}", p.track_id));
                     match p.team {
                         Some(t) => ui.label(
-                            egui::RichText::new(team_label(t, coach)).color(team_color(t)),
+                            egui::RichText::new(team_label(t, coach)).color(team_color(t, coach)),
                         ),
                         None => ui.label(
                             egui::RichText::new("—").color(colors::TEXT_SECONDARY),
@@ -1110,7 +1114,7 @@ fn show_weakest_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui:
                     ui.label(format!("#{}", w.track_id));
                     match w.team {
                         Some(t) => ui.label(
-                            egui::RichText::new(team_label(t, coach)).color(team_color(t)),
+                            egui::RichText::new(team_label(t, coach)).color(team_color(t, coach)),
                         ),
                         None => ui.label(
                             egui::RichText::new("—").color(colors::TEXT_SECONDARY),
@@ -1188,7 +1192,10 @@ fn weakness_color(w: f64) -> egui::Color32 {
     }
 }
 
-fn team_color(team: TeamId) -> egui::Color32 {
+fn team_color(team: TeamId, coach: &CoachMetrics) -> egui::Color32 {
+    if let Some((r, g, b)) = crate::metrics::coach::team_display_rgb(team, coach) {
+        return egui::Color32::from_rgb(r, g, b);
+    }
     match team {
         TeamId::TeamA => colors::PLAYER_TEAM_A,
         TeamId::TeamB => colors::PLAYER_TEAM_B,
@@ -1290,15 +1297,12 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
                         .color(colors::TEXT_SECONDARY)
                         .small(),
                 );
-                let team_assignments = app
-                    .metrics
-                    .as_ref()
-                    .map(|m| &m.coach_metrics.team_assignments);
+                let coach = app.metrics.as_ref().map(|m| &m.coach_metrics);
                 super::pitch_overlay::draw_pitch_overlay(
                     ui,
                     frame_tracks,
                     app.mapper.as_ref(),
-                    team_assignments,
+                    coach,
                 );
             },
         );

@@ -226,6 +226,26 @@ pub fn team_label(team: TeamId, metrics: &CoachMetrics) -> String {
     own_name.to_string()
 }
 
+/// Return the sampled jersey color of a team as sRGB bytes (0..=255) if
+/// a signature was captured. Brightens very dark colors and desaturates
+/// extremely saturated ones slightly so dots remain visible against the
+/// dark UI background.
+pub fn team_display_rgb(team: TeamId, metrics: &CoachMetrics) -> Option<(u8, u8, u8)> {
+    let sig = metrics.team_colors.get(&team)?;
+    let mut r = sig.r.clamp(0.0, 1.0);
+    let mut g = sig.g.clamp(0.0, 1.0);
+    let mut b = sig.b.clamp(0.0, 1.0);
+    // Pull very dark colors up so they register against dark chrome.
+    let light = (r + g + b) / 3.0;
+    if light < 0.35 {
+        let boost = (0.35 - light) * 1.4;
+        r = (r + boost).min(1.0);
+        g = (g + boost).min(1.0);
+        b = (b + boost).min(1.0);
+    }
+    Some(((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoachMetrics {
     pub team_assignments: HashMap<u32, TeamId>,
