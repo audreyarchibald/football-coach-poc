@@ -1,5 +1,6 @@
 // export/mod.rs — Export tracking data and reports
 
+use crate::metrics::coach::team_label;
 use crate::metrics::ClipMetrics;
 use crate::tactical_insights::TacticalInsight;
 use crate::tracker::TrackingResult;
@@ -128,7 +129,7 @@ pub fn generate_text_report(
     for shape in metrics.coach_metrics.team_shapes.values() {
         report.push_str(&format!(
             "{} | width {:.1}m | depth {:.1}m | line height {:.1}m | compactness {:.0} m^2\n",
-            shape.team, shape.width_m, shape.depth_m, shape.line_height_m, shape.compactness_m2
+            team_label(shape.team, &metrics.coach_metrics), shape.width_m, shape.depth_m, shape.line_height_m, shape.compactness_m2
         ));
     }
 
@@ -137,7 +138,7 @@ pub fn generate_text_report(
         for (team, color) in &metrics.coach_metrics.team_colors {
             report.push_str(&format!(
                 "- {} | rgb {:.2}/{:.2}/{:.2} | sat {:.2}\n",
-                team, color.r, color.g, color.b, color.saturation
+                team_label(*team, &metrics.coach_metrics), color.r, color.g, color.b, color.saturation
             ));
         }
     }
@@ -147,7 +148,7 @@ pub fn generate_text_report(
         for lines in metrics.coach_metrics.team_lines.values() {
             report.push_str(&format!(
                 "- {} | back {:.1}m | mid {:.1}m | front {:.1}m | B-M {:.1}m | M-F {:.1}m | between-lines {:.0}%\n",
-                lines.team,
+                team_label(lines.team, &metrics.coach_metrics),
                 lines.back_line_height_m,
                 lines.midfield_height_m,
                 lines.front_line_height_m,
@@ -164,7 +165,7 @@ pub fn generate_text_report(
             report.push_str(&format!(
                 "- {:.1}s | {} | width {:.1}m | depth {:.1}m | compactness {:.0} m^2 | support {:.0}% | rest defense {:.0}%\n",
                 sample.timestamp_secs,
-                sample.team,
+                team_label(sample.team, &metrics.coach_metrics),
                 sample.width_m,
                 sample.depth_m,
                 sample.compactness_m2,
@@ -180,7 +181,7 @@ pub fn generate_text_report(
             report.push_str(&format!(
                 "- {:.1}s | {} | B-M {:.1}m | M-F {:.1}m | between-lines {:.0}%\n",
                 sample.timestamp_secs,
-                sample.team,
+                team_label(sample.team, &metrics.coach_metrics),
                 sample.back_to_mid_spacing_m,
                 sample.mid_to_front_spacing_m,
                 sample.between_lines_occupation_score * 100.0,
@@ -211,7 +212,7 @@ pub fn generate_text_report(
         for alert in metrics.coach_metrics.structural_alerts.iter().take(6) {
             report.push_str(&format!(
                 "- {} | {}: {}\n",
-                alert.team, alert.title, alert.description
+                team_label(alert.team, &metrics.coach_metrics), alert.title, alert.description
             ));
         }
     }
@@ -230,7 +231,7 @@ pub fn generate_text_report(
         for tp in &ma.possession.teams {
             report.push_str(&format!(
                 "\n{} — {:.1}s ({:.1}%)\n",
-                tp.team, tp.time_secs, tp.share_pct
+                team_label(tp.team, &metrics.coach_metrics), tp.time_secs, tp.share_pct
             ));
             report.push_str("  Thirds:");
             for third in [
@@ -268,19 +269,19 @@ pub fn generate_text_report(
             crate::metrics::coach::TeamId::TeamB,
         ] {
             let n = ma.crossing.by_team.get(&team).copied().unwrap_or(0);
-            report.push_str(&format!("- {}: {} crosses\n", team, n));
+            report.push_str(&format!("- {}: {} crosses\n", team_label(team, &metrics.coach_metrics), n));
         }
         report.push('\n');
-        report.push_str("  Time  | Team | Side  | Origin        | Atk/Def | Zones\n");
-        report.push_str("  ──────|──────|───────|───────────────|─────────|──────\n");
+        report.push_str("  Time  | Team       | Side  | Origin        | Atk/Def | Zones\n");
+        report.push_str("  ──────|────────────|───────|───────────────|─────────|──────\n");
         for ev in ma.crossing.events.iter().take(20) {
             let mut zones: Vec<String> =
                 ev.attacker_zones.iter().map(|z| z.to_string()).collect();
             zones.sort();
             report.push_str(&format!(
-                "  {:>5.1}s| {:<5}| {:<6}| {:>5.1},{:>5.1}  |  {} vs {}  | {}\n",
+                "  {:>5.1}s| {:<10}| {:<6}| {:>5.1},{:>5.1}  |  {} vs {}  | {}\n",
                 ev.timestamp_secs,
-                ev.attacking_team.to_string(),
+                team_label(ev.attacking_team, &metrics.coach_metrics),
                 ev.side,
                 ev.origin.x,
                 ev.origin.y,
@@ -298,7 +299,7 @@ pub fn generate_text_report(
         for tr in &ma.running.teams {
             report.push_str(&format!(
                 "- {} | {:.0} m total | HSR {:.1}s | {} sprints | {} players\n",
-                tr.team,
+                team_label(tr.team, &metrics.coach_metrics),
                 tr.total_distance_m,
                 tr.high_speed_run_secs,
                 tr.sprint_count,
@@ -306,15 +307,15 @@ pub fn generate_text_report(
             ));
         }
         report.push('\n');
-        report.push_str("  ID   | Team | Dist(m) | HSR(s) | Sprints | Max(km/h)\n");
-        report.push_str("  ─────|──────|─────────|────────|─────────|──────────\n");
+        report.push_str("  ID   | Team       | Dist(m) | HSR(s) | Sprints | Max(km/h)\n");
+        report.push_str("  ─────|────────────|─────────|────────|─────────|──────────\n");
         for p in ma.running.players.iter().take(20) {
             let team = p
                 .team
-                .map(|t| t.to_string())
+                .map(|t| team_label(t, &metrics.coach_metrics))
                 .unwrap_or_else(|| "—".to_string());
             report.push_str(&format!(
-                "  #{:<4}| {:<5}| {:<7.0} | {:<6.1} | {:<7} | {:<8.1}\n",
+                "  #{:<4}| {:<10}| {:<7.0} | {:<6.1} | {:<7} | {:<8.1}\n",
                 p.track_id,
                 team,
                 p.total_distance_m,
@@ -333,15 +334,15 @@ pub fn generate_text_report(
             "Composite: low activity (30%), low speed (20%), turnovers (25%), 1v1 losses (25%).\n\n",
         );
         report.push_str(
-            "  Rank | ID   | Team | Weak | Turnovers | Duel loss | Notes\n",
+            "  Rank | ID   | Team       | Weak | Turnovers | Duel loss | Notes\n",
         );
         report.push_str(
-            "  ─────|──────|──────|──────|───────────|───────────|──────\n",
+            "  ─────|──────|────────────|──────|───────────|───────────|──────\n",
         );
         for (i, w) in ma.weakest_players.iter().take(10).enumerate() {
             let team = w
                 .team
-                .map(|t| t.to_string())
+                .map(|t| team_label(t, &metrics.coach_metrics))
                 .unwrap_or_else(|| "—".to_string());
             let notes = if w.notes.is_empty() {
                 "".to_string()
@@ -349,7 +350,7 @@ pub fn generate_text_report(
                 w.notes.clone()
             };
             report.push_str(&format!(
-                "  {:<4} | #{:<4}| {:<5}| {:<4.2} | {:<9.2} | {:<9.2} | {}\n",
+                "  {:<4} | #{:<4}| {:<10}| {:<4.2} | {:<9.2} | {:<9.2} | {}\n",
                 i + 1,
                 w.track_id,
                 team,

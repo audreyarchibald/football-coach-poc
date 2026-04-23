@@ -125,6 +125,107 @@ pub struct ColorSignature {
     pub saturation: f32,
 }
 
+/// Convert a jersey color signature to a short human-readable name
+/// ("Red", "Blue", "White", "Dark", "Yellow", etc.).
+/// r/g/b are expected in 0..1.
+pub fn color_signature_name(c: &ColorSignature) -> &'static str {
+    let r = c.r.clamp(0.0, 1.0);
+    let g = c.g.clamp(0.0, 1.0);
+    let b = c.b.clamp(0.0, 1.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let lightness = (max + min) * 0.5;
+    let sat = c.saturation.clamp(0.0, 1.0);
+
+    // Low saturation → grayscale: White / Gray / Black / Dark
+    if sat < 0.18 {
+        if lightness > 0.78 {
+            return "White";
+        } else if lightness > 0.45 {
+            return "Gray";
+        } else if lightness > 0.22 {
+            return "Dark";
+        } else {
+            return "Black";
+        }
+    }
+
+    // Hue buckets using dominant channel comparisons
+    // Red: r dominant, g & b similarly lower
+    // Yellow: r & g high, b low
+    // Green: g dominant
+    // Cyan: g & b high, r low
+    // Blue: b dominant
+    // Magenta/Pink: r & b high, g low; split by lightness
+    let r_dom = r >= g && r >= b;
+    let g_dom = g >= r && g >= b;
+    let b_dom = b >= r && b >= g;
+
+    if r_dom && g > 0.55 && b < 0.45 {
+        return if lightness > 0.55 { "Yellow" } else { "Orange" };
+    }
+    if r_dom && b > 0.45 && g < 0.45 {
+        return if lightness > 0.65 { "Pink" } else { "Magenta" };
+    }
+    if g_dom && b > 0.55 && r < 0.45 {
+        return "Cyan";
+    }
+    if r_dom {
+        return if lightness < 0.35 { "Maroon" } else { "Red" };
+    }
+    if g_dom {
+        return if lightness < 0.35 { "Dark Green" } else { "Green" };
+    }
+    if b_dom {
+        return if lightness < 0.35 {
+            "Navy"
+        } else if lightness > 0.70 {
+            "Light Blue"
+        } else {
+            "Blue"
+        };
+    }
+    "Team"
+}
+
+/// Return a short display label for a team based on its jersey color,
+/// falling back to "Team A"/"Team B" if color data is unavailable or
+/// both teams resolve to the same name (in which case we disambiguate
+/// with Light/Dark prefix or fall back to the generic label).
+pub fn team_label(team: TeamId, metrics: &CoachMetrics) -> String {
+    let own = metrics.team_colors.get(&team);
+    let other_team = match team {
+        TeamId::TeamA => TeamId::TeamB,
+        TeamId::TeamB => TeamId::TeamA,
+    };
+    let other = metrics.team_colors.get(&other_team);
+
+    let Some(own_sig) = own else {
+        return team.to_string();
+    };
+    let own_name = color_signature_name(own_sig);
+
+    if let Some(other_sig) = other {
+        let other_name = color_signature_name(other_sig);
+        if own_name == other_name {
+            // Disambiguate by lightness
+            let own_light = own_sig.r + own_sig.g + own_sig.b;
+            let other_light = other_sig.r + other_sig.g + other_sig.b;
+            if (own_light - other_light).abs() < 0.15 {
+                // Truly indistinguishable — fall back to generic
+                return team.to_string();
+            }
+            let prefix = if own_light >= other_light {
+                "Light"
+            } else {
+                "Dark"
+            };
+            return format!("{} {}", prefix, own_name);
+        }
+    }
+    own_name.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoachMetrics {
     pub team_assignments: HashMap<u32, TeamId>,

@@ -3,7 +3,7 @@
 use super::app::{AnalysisTab, CoachApp};
 use super::colors;
 use crate::detection::COCO_SPORTS_BALL;
-use crate::metrics::coach::TeamId;
+use crate::metrics::coach::{team_label, CoachMetrics, TeamId};
 use crate::metrics::match_analysis::{
     CrossEvent, MatchAnalysis, PitchLane, PitchThird, WeakPlayerScore,
 };
@@ -421,7 +421,7 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
     for shape in metrics.coach_metrics.team_shapes.values() {
         ui.label(format!(
             "{} | width {:.1}m | depth {:.1}m | line height {:.1}m | compactness {:.0} m²",
-            shape.team, shape.width_m, shape.depth_m, shape.line_height_m, shape.compactness_m2
+            team_label(shape.team, &metrics.coach_metrics), shape.width_m, shape.depth_m, shape.line_height_m, shape.compactness_m2
         ));
     }
 
@@ -431,7 +431,7 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
         for (team, color) in &metrics.coach_metrics.team_colors {
             ui.label(format!(
                 "{} | rgb {:.2}/{:.2}/{:.2} | sat {:.2}",
-                team, color.r, color.g, color.b, color.saturation
+                team_label(*team, &metrics.coach_metrics), color.r, color.g, color.b, color.saturation
             ));
         }
     }
@@ -442,7 +442,7 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
         for lines in metrics.coach_metrics.team_lines.values() {
             ui.label(format!(
                 "{} | back {:.1}m | mid {:.1}m | front {:.1}m | B-M {:.1}m | M-F {:.1}m | between-lines {:.0}%",
-                lines.team,
+                team_label(lines.team, &metrics.coach_metrics),
                 lines.back_line_height_m,
                 lines.midfield_height_m,
                 lines.front_line_height_m,
@@ -461,7 +461,7 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
                 egui::RichText::new(format!(
                     "{:.1}s | {} | width {:.1}m | depth {:.1}m | compactness {:.0} m² | support {:.0}% | rest defense {:.0}%",
                     sample.timestamp_secs,
-                    sample.team,
+                    team_label(sample.team, &metrics.coach_metrics),
                     sample.width_m,
                     sample.depth_m,
                     sample.compactness_m2,
@@ -481,7 +481,7 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
                 egui::RichText::new(format!(
                     "{:.1}s | {} | B-M {:.1}m | M-F {:.1}m | between-lines {:.0}%",
                     sample.timestamp_secs,
-                    sample.team,
+                    team_label(sample.team, &metrics.coach_metrics),
                     sample.back_to_mid_spacing_m,
                     sample.mid_to_front_spacing_m,
                     sample.between_lines_occupation_score * 100.0,
@@ -522,7 +522,14 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
         );
     } else {
         for alert in &metrics.coach_metrics.structural_alerts {
-            ui.label(egui::RichText::new(format!("{} | {}", alert.team, alert.title)).strong());
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} | {}",
+                    team_label(alert.team, &metrics.coach_metrics),
+                    alert.title
+                ))
+                .strong(),
+            );
             ui.label(egui::RichText::new(&alert.description).color(colors::TEXT_SECONDARY));
             ui.add_space(6.0);
         }
@@ -745,19 +752,26 @@ fn show_pitch_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
 
     // Legend
     ui.add_space(12.0);
+    let (label_a, label_b) = match app.metrics.as_ref() {
+        Some(m) => (
+            team_label(TeamId::TeamA, &m.coach_metrics),
+            team_label(TeamId::TeamB, &m.coach_metrics),
+        ),
+        None => ("Team A".to_string(), "Team B".to_string()),
+    };
     ui.horizontal(|ui| {
         let dot_size = 8.0;
         let (rect_a, _) =
             ui.allocate_exact_size(egui::vec2(dot_size, dot_size), egui::Sense::hover());
         ui.painter()
             .circle_filled(rect_a.center(), dot_size / 2.0, colors::PLAYER_TEAM_A);
-        ui.label("Team A");
+        ui.label(&label_a);
         ui.add_space(8.0);
         let (rect_b, _) =
             ui.allocate_exact_size(egui::vec2(dot_size, dot_size), egui::Sense::hover());
         ui.painter()
             .circle_filled(rect_b.center(), dot_size / 2.0, colors::PLAYER_TEAM_B);
-        ui.label("Team B");
+        ui.label(&label_b);
         ui.add_space(8.0);
         let (rect_ball, _) =
             ui.allocate_exact_size(egui::vec2(dot_size, dot_size), egui::Sense::hover());
@@ -780,6 +794,7 @@ fn show_match_plan_tab(app: &CoachApp, ui: &mut egui::Ui) {
         return;
     };
     let ma = &metrics.match_analysis;
+    let coach = &metrics.coach_metrics;
 
     ui.label(
         egui::RichText::new("Match Plan")
@@ -796,16 +811,16 @@ fn show_match_plan_tab(app: &CoachApp, ui: &mut egui::Ui) {
     );
     ui.add_space(10.0);
 
-    show_possession_section(ma, ui);
+    show_possession_section(ma, coach, ui);
     ui.add_space(14.0);
-    show_crossing_section(ma, ui);
+    show_crossing_section(ma, coach, ui);
     ui.add_space(14.0);
-    show_running_section(ma, ui);
+    show_running_section(ma, coach, ui);
     ui.add_space(14.0);
-    show_weakest_section(ma, ui);
+    show_weakest_section(ma, coach, ui);
 }
 
-fn show_possession_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
+fn show_possession_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui::Ui) {
     egui::CollapsingHeader::new(
         egui::RichText::new("Possession — time, location & switches").strong(),
     )
@@ -851,14 +866,14 @@ fn show_possession_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
         painter.text(
             rect.left_center() + egui::vec2(8.0, 0.0),
             egui::Align2::LEFT_CENTER,
-            format!("A {:.0}%", share_a),
+            format!("{} {:.0}%", team_label(TeamId::TeamA, coach), share_a),
             egui::FontId::proportional(12.0),
             egui::Color32::WHITE,
         );
         painter.text(
             rect.right_center() - egui::vec2(8.0, 0.0),
             egui::Align2::RIGHT_CENTER,
-            format!("{:.0}% B", share_b),
+            format!("{:.0}% {}", share_b, team_label(TeamId::TeamB, coach)),
             egui::FontId::proportional(12.0),
             egui::Color32::WHITE,
         );
@@ -868,9 +883,14 @@ fn show_possession_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
         // Per-team breakdown
         for tp in &poss.teams {
             ui.label(
-                egui::RichText::new(format!("{} — {:.1}s ({:.1}%)", tp.team, tp.time_secs, tp.share_pct))
-                    .strong()
-                    .color(team_color(tp.team)),
+                egui::RichText::new(format!(
+                    "{} — {:.1}s ({:.1}%)",
+                    team_label(tp.team, coach),
+                    tp.time_secs,
+                    tp.share_pct
+                ))
+                .strong()
+                .color(team_color(tp.team)),
             );
 
             // Thirds
@@ -899,7 +919,7 @@ fn show_possession_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
     });
 }
 
-fn show_crossing_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
+fn show_crossing_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui::Ui) {
     egui::CollapsingHeader::new(
         egui::RichText::new("Crossing — events, origin & box load").strong(),
     )
@@ -918,7 +938,7 @@ fn show_crossing_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
             for team in [TeamId::TeamA, TeamId::TeamB] {
                 let n = cx.by_team.get(&team).copied().unwrap_or(0);
                 ui.label(
-                    egui::RichText::new(format!("{}: {} crosses", team, n))
+                    egui::RichText::new(format!("{}: {} crosses", team_label(team, coach), n))
                         .strong()
                         .color(team_color(team)),
                 );
@@ -943,7 +963,7 @@ fn show_crossing_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
                 for ev in cx.events.iter().take(40) {
                     ui.label(format!("{:.1}s", ev.timestamp_secs));
                     ui.label(
-                        egui::RichText::new(ev.attacking_team.to_string())
+                        egui::RichText::new(team_label(ev.attacking_team, coach))
                             .color(team_color(ev.attacking_team)),
                     );
                     ui.label(ev.side.to_string());
@@ -982,7 +1002,7 @@ fn zones_summary(ev: &CrossEvent) -> String {
     parts.join(", ")
 }
 
-fn show_running_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
+fn show_running_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui::Ui) {
     egui::CollapsingHeader::new(
         egui::RichText::new("Running — distance, high-speed & sprints").strong(),
     )
@@ -1002,7 +1022,7 @@ fn show_running_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(format!(
                     "{} — {:.0} m total, {:.1}s HSR, {} sprints ({} players)",
-                    tr.team,
+                    team_label(tr.team, coach),
                     tr.total_distance_m,
                     tr.high_speed_run_secs,
                     tr.sprint_count,
@@ -1031,7 +1051,7 @@ fn show_running_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
                     ui.label(format!("#{}", p.track_id));
                     match p.team {
                         Some(t) => ui.label(
-                            egui::RichText::new(t.to_string()).color(team_color(t)),
+                            egui::RichText::new(team_label(t, coach)).color(team_color(t)),
                         ),
                         None => ui.label(
                             egui::RichText::new("—").color(colors::TEXT_SECONDARY),
@@ -1047,7 +1067,7 @@ fn show_running_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
     });
 }
 
-fn show_weakest_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
+fn show_weakest_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui::Ui) {
     egui::CollapsingHeader::new(
         egui::RichText::new("Weakest players — target these").strong(),
     )
@@ -1090,7 +1110,7 @@ fn show_weakest_section(ma: &MatchAnalysis, ui: &mut egui::Ui) {
                     ui.label(format!("#{}", w.track_id));
                     match w.team {
                         Some(t) => ui.label(
-                            egui::RichText::new(t.to_string()).color(team_color(t)),
+                            egui::RichText::new(team_label(t, coach)).color(team_color(t)),
                         ),
                         None => ui.label(
                             egui::RichText::new("—").color(colors::TEXT_SECONDARY),

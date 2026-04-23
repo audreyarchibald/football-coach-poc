@@ -1,5 +1,6 @@
 // tactical_insights/mod.rs — Generate coach-friendly text insights
 
+use crate::metrics::coach::team_label;
 use crate::metrics::pressing::PitchZone;
 use crate::metrics::{ClipMetrics, PlayerMetrics};
 use serde::{Deserialize, Serialize};
@@ -292,10 +293,10 @@ fn generate_coach_insights(metrics: &ClipMetrics, insights: &mut Vec<TacticalIns
     for shape in metrics.coach_metrics.team_shapes.values() {
         insights.push(TacticalInsight {
             category: InsightCategory::Formation,
-            title: format!("{} shape", shape.team),
+            title: format!("{} shape", team_label(shape.team, &metrics.coach_metrics)),
             description: format!(
                 "{} average width {:.1}m, depth {:.1}m, line height {:.1}m. This is the structural picture a coach wants before judging individuals.",
-                shape.team, shape.width_m, shape.depth_m, shape.line_height_m
+                team_label(shape.team, &metrics.coach_metrics), shape.width_m, shape.depth_m, shape.line_height_m
             ),
             importance: Importance::Medium,
         });
@@ -304,7 +305,7 @@ fn generate_coach_insights(metrics: &ClipMetrics, insights: &mut Vec<TacticalIns
     for alert in metrics.coach_metrics.structural_alerts.iter().take(4) {
         insights.push(TacticalInsight {
             category: InsightCategory::Formation,
-            title: format!("{}: {}", alert.team, alert.title),
+            title: format!("{}: {}", team_label(alert.team, &metrics.coach_metrics), alert.title),
             description: alert.description.clone(),
             importance: if alert.severity > 0.75 {
                 Importance::High
@@ -324,11 +325,11 @@ fn generate_coach_insights(metrics: &ClipMetrics, insights: &mut Vec<TacticalIns
         if let Some(sample) = weakest_rest {
             insights.push(TacticalInsight {
                 category: InsightCategory::Formation,
-                title: format!("{} rest defense sample", sample.team),
+                title: format!("{} rest defense sample", team_label(sample.team, &metrics.coach_metrics)),
                 description: format!(
                     "At {:.1}s, {} rest-defense score is {:.0}%. This helps flag whether the team is protected behind the ball when attacking.",
                     sample.timestamp_secs,
-                    sample.team,
+                    team_label(sample.team, &metrics.coach_metrics),
                     sample.rest_defense_score * 100.0,
                 ),
                 importance: if sample.rest_defense_score < 0.35 {
@@ -344,10 +345,10 @@ fn generate_coach_insights(metrics: &ClipMetrics, insights: &mut Vec<TacticalIns
         if lines.back_to_mid_spacing_m > 16.0 {
             insights.push(TacticalInsight {
                 category: InsightCategory::Formation,
-                title: format!("{} back-to-mid gap", lines.team),
+                title: format!("{} back-to-mid gap", team_label(lines.team, &metrics.coach_metrics)),
                 description: format!(
                     "{} show {:.1}m between back line and midfield. That is a coach-level warning sign for vertical disconnection.",
-                    lines.team, lines.back_to_mid_spacing_m
+                    team_label(lines.team, &metrics.coach_metrics), lines.back_to_mid_spacing_m
                 ),
                 importance: Importance::High,
             });
@@ -356,10 +357,10 @@ fn generate_coach_insights(metrics: &ClipMetrics, insights: &mut Vec<TacticalIns
         if lines.between_lines_occupation_score < 0.35 {
             insights.push(TacticalInsight {
                 category: InsightCategory::Formation,
-                title: format!("{} lack between-lines presence", lines.team),
+                title: format!("{} lack between-lines presence", team_label(lines.team, &metrics.coach_metrics)),
                 description: format!(
                     "{} only score {:.0}% for between-lines occupation. The team may be circulating around the block instead of breaking it.",
-                    lines.team,
+                    team_label(lines.team, &metrics.coach_metrics),
                     lines.between_lines_occupation_score * 100.0,
                 ),
                 importance: Importance::High,
