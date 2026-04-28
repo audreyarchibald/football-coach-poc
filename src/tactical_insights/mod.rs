@@ -174,7 +174,7 @@ fn generate_possession_insights(metrics: &ClipMetrics, insights: &mut Vec<Tactic
         category: InsightCategory::Possession,
         title: "Ball involvement".to_string(),
         description: format!(
-            "{} total touch events across {} players.",
+            "{} distinct possession touches across {} players after collapsing continuous same-player control.",
             metrics.ball_possessions.len(),
             touches.len()
         ),
@@ -203,8 +203,12 @@ fn generate_movement_insights(metrics: &ClipMetrics, insights: &mut Vec<Tactical
             category: InsightCategory::Movement,
             title: format!("Most distance: Player #{}", top.track_id),
             description: format!(
-                "Player #{} covered {:.1}m (avg {:.1} km/h, max {:.1} km/h).",
-                top.track_id, top.total_distance_m, top.avg_speed_kmh, top.max_speed_kmh
+                "Player #{} covered {:.1}m (avg {:.1} km/h, max {:.1} km/h, {} touches).",
+                top.track_id,
+                top.total_distance_m,
+                top.avg_speed_kmh,
+                top.max_speed_kmh,
+                top.touches
             ),
             importance: Importance::Medium,
         });
@@ -305,7 +309,11 @@ fn generate_coach_insights(metrics: &ClipMetrics, insights: &mut Vec<TacticalIns
     for alert in metrics.coach_metrics.structural_alerts.iter().take(4) {
         insights.push(TacticalInsight {
             category: InsightCategory::Formation,
-            title: format!("{}: {}", team_label(alert.team, &metrics.coach_metrics), alert.title),
+            title: format!(
+                "{}: {}",
+                team_label(alert.team, &metrics.coach_metrics),
+                alert.title
+            ),
             description: alert.description.clone(),
             importance: if alert.severity > 0.75 {
                 Importance::High

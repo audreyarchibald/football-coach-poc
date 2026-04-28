@@ -18,7 +18,7 @@ pub struct VideoInfo {
 }
 
 /// A single decoded video frame
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct VideoFrame {
     pub index: u64,
     pub timestamp_secs: f64,

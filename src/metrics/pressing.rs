@@ -1,9 +1,11 @@
 // metrics/pressing.rs — Simple pressing intensity analysis
 
 use crate::detection::COCO_SPORTS_BALL;
+use crate::metrics::coach::TeamId;
 use crate::pitch_mapping::{pitch_distance, PitchMapper, Point2D, PITCH_LENGTH};
 use crate::tracker::TrackingResult;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Distance threshold for "pressing" — player within X meters of ball carrier
 const PRESSING_DISTANCE_M: f64 = 8.0;
@@ -50,36 +52,68 @@ fn classify_zone(pos: &Point2D) -> PitchZone {
 }
 
 /// Compute pressing events from tracking data
-pub fn compute_pressing(tracking: &TrackingResult, mapper: &PitchMapper) -> Vec<PressingEvent> {
+pub fn compute_pressing(
+    tracking: &TrackingResult,
+    mapper: &PitchMapper,
+    team_assignments: &HashMap<u32, TeamId>,
+) -> Vec<PressingEvent> {
     let mut events = Vec::new();
 
     for ft in &tracking.frame_tracks {
-        let balls: Vec<_> = ft
-            .tracks
-            .iter()
-            .filter(|t| t.class_id == COCO_SPORTS_BALL)
-            .collect();
-
-        if balls.is_empty() {
+        let Some(ball) = ft.tracks.iter().find(|t| t.class_id == COCO_SPORTS_BALL) else {
+            continue;
+        };
+        let ball_pos = mapper.bbox_to_pitch(ball.bbox.x1, ball.bbox.y1, ball.bbox.x2, ball.bbox.y2);
+        if !ball_pos.x.is_finite() || !ball_pos.y.is_finite() {
             continue;
         }
 
-        let ball = &balls[0];
-        let ball_pos = mapper.bbox_to_pitch(ball.bbox.x1, ball.bbox.y1, ball.bbox.x2, ball.bbox.y2);
-
-        // Count players within pressing distance of the ball
-        let mut pressing_count = 0u32;
-        for track in &ft.tracks {
-            if track.class_name == "Player" {
+        let carrier = ft
+            .tracks
+            .iter()
+            .filter(|track| track.class_name == "Player")
+            .filter_map(|track| {
                 let pos = mapper.bbox_to_pitch(
                     track.bbox.x1,
                     track.bbox.y1,
                     track.bbox.x2,
                     track.bbox.y2,
                 );
-                if pitch_distance(&ball_pos, &pos) < PRESSING_DISTANCE_M {
-                    pressing_count += 1;
+                if !pos.x.is_finite() || !pos.y.is_finite() {
+                    return None;
                 }
+                let dist = pitch_distance(&ball_pos, &pos);
+                dist.is_finite().then_some((track.track_id, dist))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+
+        let Some((carrier_id, carrier_dist)) = carrier else {
+            continue;
+        };
+        if carrier_dist > 4.0 {
+            continue;
+        }
+        let Some(carrier_team) = team_assignments.get(&carrier_id).copied() else {
+            continue;
+        };
+
+        // Count opponents close enough to pressure the identified ball carrier.
+        let mut pressing_count = 0u32;
+        for track in &ft.tracks {
+            if track.class_name != "Player" || track.track_id == carrier_id {
+                continue;
+            }
+            if team_assignments.get(&track.track_id).copied() == Some(carrier_team) {
+                continue;
+            }
+            let pos =
+                mapper.bbox_to_pitch(track.bbox.x1, track.bbox.y1, track.bbox.x2, track.bbox.y2);
+            if !pos.x.is_finite() || !pos.y.is_finite() {
+                continue;
+            }
+            let distance = pitch_distance(&ball_pos, &pos);
+            if distance.is_finite() && distance < PRESSING_DISTANCE_M {
+                pressing_count += 1;
             }
         }
 

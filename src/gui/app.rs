@@ -2,8 +2,9 @@
 
 use super::colors;
 use crate::detection::yolo::YoloDetector;
-use crate::detection::FrameDetections;
+use crate::detection::{FrameDetections, COCO_PERSON, COCO_SPORTS_BALL};
 use crate::library::{LibraryItem, MediaLibrary};
+use crate::live_capture::{CaptureSource, CaptureTarget, ScreenCapture};
 use crate::metrics::ClipMetrics;
 use crate::pitch_awareness::{
     auto_calibration_from_scene, build_detection_sampling_plan, detect_relevant_segments,
@@ -12,13 +13,51 @@ use crate::pitch_awareness::{
 };
 use crate::pitch_mapping::{HomographyCalibration, PitchMapper, PitchReferencePoint};
 use crate::tactical_insights::TacticalInsight;
-use crate::tracker::TrackingResult;
+use crate::tracker::{FrameTracks, TrackingResult};
 use crate::video_processor::{VideoFrame, VideoInfo};
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use log::info;
+use std::collections::VecDeque;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
+
+const LIVE_HISTORY_LIMIT: usize = 180;
+
+#[derive(Debug, Clone)]
+pub struct LiveAnalysisSnapshot {
+    pub frame: VideoFrame,
+    pub video_info: VideoInfo,
+    pub detections: FrameDetections,
+    pub tracks: FrameTracks,
+    pub players_visible: usize,
+    pub ball_visible: bool,
+    pub tracked_players: usize,
+    pub inferred_fps: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LiveStats {
+    pub frames_processed: u64,
+    pub current_players_visible: usize,
+    pub current_tracked_players: usize,
+    pub ball_visible: bool,
+    pub inferred_fps: f32,
+    pub last_timestamp_secs: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LiveModeState {
+    pub enabled: bool,
+    pub requested: bool,
+    pub stats: LiveStats,
+    pub sources: Vec<CaptureSource>,
+}
 
 /// Analysis progress state
 #[derive(Debug, Clone)]
@@ -49,6 +88,7 @@ enum AnalysisMessage {
     MapperReady(PitchMapper),
     MetricsDone(ClipMetrics),
     InsightsDone(Vec<TacticalInsight>),
+    LiveFrame(LiveAnalysisSnapshot),
     Error(String),
 }
 
@@ -144,6 +184,13 @@ pub struct CoachApp {
     pub url_input: String,
     pub use_browser_cookies_for_url_loader: bool,
     pub browser_cookie_source: BrowserCookieSource,
+
+    // Live capture state
+    pub live_mode: LiveModeState,
+    pub live_detection_stride: u32,
+    pub live_source_index: usize,
+    live_history: VecDeque<LiveAnalysisSnapshot>,
+    live_capture_running: Arc<AtomicBool>,
 }
 
 impl CoachApp {
@@ -435,6 +482,13 @@ impl CoachApp {
             log::error!("Failed to initialize media library: {}", e);
             MediaLibrary::load_or_create().expect("library fallback init")
         });
+        let live_sources = ScreenCapture::available_sources().unwrap_or_else(|err| {
+            log::warn!("Failed to enumerate live capture sources: {}", err);
+            vec![CaptureSource {
+                target: CaptureTarget::Display(1),
+                label: "Main Display".to_string(),
+            }]
+        });
 
         Self {
             video_path: None,
@@ -481,7 +535,239 @@ impl CoachApp {
             url_input: String::new(),
             use_browser_cookies_for_url_loader: false,
             browser_cookie_source: BrowserCookieSource::Chrome,
+
+            live_mode: LiveModeState {
+                enabled: false,
+                requested: false,
+                stats: LiveStats::default(),
+                sources: live_sources,
+            },
+            live_detection_stride: 2,
+            live_source_index: 0,
+            live_history: VecDeque::with_capacity(LIVE_HISTORY_LIMIT),
+            live_capture_running: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn reset_live_view(&mut self) {
+        self.frames.clear();
+        self.current_frame_idx = 0;
+        self.frame_texture = None;
+        self.video_info = None;
+        self.detections.clear();
+        self.tracking = None;
+        self.metrics = None;
+        self.insights.clear();
+        self.scene_awareness = None;
+        self.trim_suggestion = None;
+        self.mapper = None;
+        self.auto_pitch_ready = false;
+        self.analysis_start_idx = 0;
+        self.analysis_end_idx = 0;
+        self.is_playing = false;
+        self.live_history.clear();
+        self.live_mode.stats = LiveStats::default();
+    }
+
+    pub fn toggle_live_capture(&mut self) {
+        if self.live_mode.enabled {
+            self.live_capture_running.store(false, Ordering::Relaxed);
+            self.live_mode.enabled = false;
+            self.live_mode.requested = false;
+            self.analysis_state = AnalysisState::Idle;
+            return;
+        }
+
+        if self.model_path.is_none() {
+            self.analysis_state =
+                AnalysisState::Error("Load an ONNX model before starting live capture.".into());
+            return;
+        }
+
+        if self.live_mode.sources.is_empty() {
+            self.analysis_state =
+                AnalysisState::Error("No live capture sources were found on this machine.".into());
+            return;
+        }
+
+        self.reset_live_view();
+        self.live_mode.enabled = true;
+        self.live_mode.requested = true;
+        self.live_capture_running.store(true, Ordering::Relaxed);
+        self.analysis_state = AnalysisState::RunningDetection { progress: 0.0 };
+        self.start_live_capture();
+    }
+
+    fn start_live_capture(&self) {
+        let tx = self.msg_tx.clone();
+        let model_path = self.model_path.clone();
+        let conf_threshold = self.conf_threshold;
+        let target = self
+            .live_mode
+            .sources
+            .get(self.live_source_index)
+            .map(|source| source.target.clone())
+            .unwrap_or(CaptureTarget::Display(1));
+        let stride = self.live_detection_stride.max(1);
+        let running = Arc::clone(&self.live_capture_running);
+
+        std::thread::spawn(move || {
+            let Some(model_path) = model_path else {
+                tx.send(AnalysisMessage::Error(
+                    "Load an ONNX model before starting live capture.".into(),
+                ))
+                .ok();
+                return;
+            };
+
+            let mut capture = ScreenCapture::new(target, 1280);
+            let mut detector = match YoloDetector::new(&model_path, conf_threshold, 0.45) {
+                Ok(detector) => detector,
+                Err(err) => {
+                    tx.send(AnalysisMessage::Error(format!(
+                        "Live model load failed: {}",
+                        err
+                    )))
+                    .ok();
+                    return;
+                }
+            };
+            let mut tracker = crate::tracker::bytetrack::ByteTracker::with_params(15, 1, 0.2);
+            let mut latest_detections: Option<FrameDetections> = None;
+            let mut frame_counter = 0u64;
+            let mut last_frame_at = std::time::Instant::now();
+
+            while running.load(Ordering::Relaxed) {
+                match capture.capture_frame() {
+                    Ok((video_info, frame)) => {
+                        let now = std::time::Instant::now();
+                        let inferred_fps = if frame_counter == 0 {
+                            0.0
+                        } else {
+                            let dt = now.duration_since(last_frame_at).as_secs_f32();
+                            if dt > 0.0 {
+                                1.0 / dt
+                            } else {
+                                0.0
+                            }
+                        };
+                        last_frame_at = now;
+
+                        let detections = if frame_counter % stride as u64 == 0
+                            || latest_detections.is_none()
+                        {
+                            match detector.detect_frame(&frame) {
+                                Ok(mut dets) => {
+                                    dets.frame_index = frame.index;
+                                    dets.timestamp_secs = frame.timestamp_secs;
+                                    latest_detections = Some(dets.clone());
+                                    dets
+                                }
+                                Err(err) => {
+                                    tx.send(AnalysisMessage::Error(format!(
+                                        "Live detection failed: {}",
+                                        err
+                                    )))
+                                    .ok();
+                                    break;
+                                }
+                            }
+                        } else {
+                            let mut dets = latest_detections.clone().unwrap_or(FrameDetections {
+                                frame_index: frame.index,
+                                timestamp_secs: frame.timestamp_secs,
+                                detections: Vec::new(),
+                            });
+                            dets.frame_index = frame.index;
+                            dets.timestamp_secs = frame.timestamp_secs;
+                            dets
+                        };
+
+                        let tracked_objects = tracker.update(&detections.detections);
+                        let tracks = FrameTracks {
+                            frame_index: frame.index,
+                            timestamp_secs: frame.timestamp_secs,
+                            tracks: tracked_objects,
+                        };
+
+                        let players_visible = detections
+                            .detections
+                            .iter()
+                            .filter(|d| d.class_id == COCO_PERSON)
+                            .count();
+                        let ball_visible = detections
+                            .detections
+                            .iter()
+                            .any(|d| d.class_id == COCO_SPORTS_BALL);
+                        let tracked_players = tracks
+                            .tracks
+                            .iter()
+                            .filter(|track| track.class_id == COCO_PERSON)
+                            .count();
+
+                        let snapshot = LiveAnalysisSnapshot {
+                            frame,
+                            video_info,
+                            detections,
+                            tracks,
+                            players_visible,
+                            ball_visible,
+                            tracked_players,
+                            inferred_fps,
+                        };
+
+                        if tx.send(AnalysisMessage::LiveFrame(snapshot)).is_err() {
+                            break;
+                        }
+
+                        frame_counter += 1;
+                        std::thread::sleep(Duration::from_millis(70));
+                    }
+                    Err(err) => {
+                        tx.send(AnalysisMessage::Error(format!(
+                            "Live capture failed: {}",
+                            err
+                        )))
+                        .ok();
+                        break;
+                    }
+                }
+            }
+
+            running.store(false, Ordering::Relaxed);
+        });
+    }
+
+    fn apply_live_snapshot(&mut self, snapshot: LiveAnalysisSnapshot) {
+        self.analysis_state = AnalysisState::RunningDetection { progress: 0.0 };
+        self.video_info = Some(snapshot.video_info.clone());
+        self.frames = vec![snapshot.frame.clone()];
+        self.current_frame_idx = 0;
+        self.analysis_start_idx = 0;
+        self.analysis_end_idx = 0;
+        self.detections = vec![snapshot.detections.clone()];
+        self.tracking = Some(TrackingResult {
+            frame_tracks: vec![snapshot.tracks.clone()],
+            track_classes: snapshot
+                .tracks
+                .tracks
+                .iter()
+                .map(|track| (track.track_id, track.class_name.clone()))
+                .collect(),
+            total_tracks: snapshot.tracks.tracks.len() as u32,
+        });
+
+        self.live_mode.stats.frames_processed += 1;
+        self.live_mode.stats.current_players_visible = snapshot.players_visible;
+        self.live_mode.stats.current_tracked_players = snapshot.tracked_players;
+        self.live_mode.stats.ball_visible = snapshot.ball_visible;
+        self.live_mode.stats.inferred_fps = snapshot.inferred_fps;
+        self.live_mode.stats.last_timestamp_secs = snapshot.frame.timestamp_secs;
+
+        if self.live_history.len() == LIVE_HISTORY_LIMIT {
+            self.live_history.pop_front();
+        }
+        self.live_history.push_back(snapshot);
     }
 
     /// Process messages from background thread
@@ -564,7 +850,15 @@ impl CoachApp {
                     self.insights = ins;
                     self.analysis_state = AnalysisState::Complete;
                 }
+                AnalysisMessage::LiveFrame(snapshot) => {
+                    if self.live_mode.enabled {
+                        self.apply_live_snapshot(snapshot);
+                    }
+                }
                 AnalysisMessage::Error(e) => {
+                    self.live_capture_running.store(false, Ordering::Relaxed);
+                    self.live_mode.enabled = false;
+                    self.live_mode.requested = false;
                     self.analysis_state = AnalysisState::Error(e);
                 }
             }
@@ -1037,6 +1331,10 @@ impl eframe::App for CoachApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
 
+        if self.live_mode.enabled {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        }
+
         // Auto-advance frames if playing
         if self.is_playing && !self.frames.is_empty() {
             let now = ctx.input(|i| i.time);
@@ -1097,6 +1395,17 @@ impl eframe::App for CoachApp {
                     {
                         self.model_path = Some(path);
                     }
+                }
+
+                if ui
+                    .button(if self.live_mode.enabled {
+                        "Stop Live Watch"
+                    } else {
+                        "Start Live Watch"
+                    })
+                    .clicked()
+                {
+                    self.toggle_live_capture();
                 }
 
                 ui.separator();

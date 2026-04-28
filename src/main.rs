@@ -7,6 +7,7 @@ mod detection;
 mod export;
 mod gui;
 mod library;
+mod live_capture;
 mod metrics;
 mod pitch_awareness;
 mod pitch_mapping;

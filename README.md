@@ -10,8 +10,8 @@ A Rust-based desktop application for football (soccer) tactical analysis. Load a
 - **Pitch Homography** — Manual 4-corner calibration for 2D top-down mapping
 - **Heatmaps** — Team and per-player occupancy on a pitch diagram
 - **Movement Metrics** — Distance covered, average/max speed per player
-- **Possession** — Proximity-based ball touch detection
-- **Pressing Analysis** — Pressing intensity by pitch zone
+- **Possession** — Nearest-carrier touch detection with continuous-control collapse
+- **Pressing Analysis** — Opponent pressure intensity by pitch zone
 - **Tactical Insights** — Rule-based text summaries for coaches
 - **Export** — JSON data export with full tracking + metrics
 - **Local Media Library** — Store original videos and render trimmed `.mp4` clips into a local app library
@@ -149,7 +149,7 @@ Video File
 
 ## Known Limitations (PoC)
 
-- **No team classification** — Players are not split into teams (would need jersey color clustering)
+- **Heuristic team classification** — Jersey color clustering with position fallback; still not as reliable as roster-aware kit detection
 - **Single camera** — Assumes a single broadcast-angle camera
 - **Manual homography** — Pitch corners must be set manually
 - **Simplified tracking** — Greedy matching, no Re-ID for occluded players

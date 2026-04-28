@@ -95,8 +95,8 @@ pub fn generate_text_report(
     }
 
     report.push_str("── PLAYER METRICS ────────────────────────────\n\n");
-    report.push_str("  ID   | Distance  | Avg Speed  | Max Speed  \n");
-    report.push_str("  ─────|───────────|────────────|────────────\n");
+    report.push_str("  ID   | Distance  | Avg Speed  | Max Speed  | Touches\n");
+    report.push_str("  ─────|───────────|────────────|────────────|────────\n");
 
     let mut players: Vec<_> = metrics.player_metrics.values().collect();
     players.retain(|player| player.total_distance_m.is_finite());
@@ -104,8 +104,8 @@ pub fn generate_text_report(
 
     for p in &players {
         report.push_str(&format!(
-            "  #{:<4}| {:<9.1}m| {:<10.1} | {:<10.1}\n",
-            p.track_id, p.total_distance_m, p.avg_speed_kmh, p.max_speed_kmh
+            "  #{:<4}| {:<9.1}m| {:<10.1} | {:<10.1} | {}\n",
+            p.track_id, p.total_distance_m, p.avg_speed_kmh, p.max_speed_kmh, p.touches
         ));
     }
 
@@ -129,7 +129,11 @@ pub fn generate_text_report(
     for shape in metrics.coach_metrics.team_shapes.values() {
         report.push_str(&format!(
             "{} | width {:.1}m | depth {:.1}m | line height {:.1}m | compactness {:.0} m^2\n",
-            team_label(shape.team, &metrics.coach_metrics), shape.width_m, shape.depth_m, shape.line_height_m, shape.compactness_m2
+            team_label(shape.team, &metrics.coach_metrics),
+            shape.width_m,
+            shape.depth_m,
+            shape.line_height_m,
+            shape.compactness_m2
         ));
     }
 
@@ -138,7 +142,11 @@ pub fn generate_text_report(
         for (team, color) in &metrics.coach_metrics.team_colors {
             report.push_str(&format!(
                 "- {} | rgb {:.2}/{:.2}/{:.2} | sat {:.2}\n",
-                team_label(*team, &metrics.coach_metrics), color.r, color.g, color.b, color.saturation
+                team_label(*team, &metrics.coach_metrics),
+                color.r,
+                color.g,
+                color.b,
+                color.saturation
             ));
         }
     }
@@ -212,7 +220,9 @@ pub fn generate_text_report(
         for alert in metrics.coach_metrics.structural_alerts.iter().take(6) {
             report.push_str(&format!(
                 "- {} | {}: {}\n",
-                team_label(alert.team, &metrics.coach_metrics), alert.title, alert.description
+                team_label(alert.team, &metrics.coach_metrics),
+                alert.title,
+                alert.description
             ));
         }
     }
@@ -231,7 +241,9 @@ pub fn generate_text_report(
         for tp in &ma.possession.teams {
             report.push_str(&format!(
                 "\n{} — {:.1}s ({:.1}%)\n",
-                team_label(tp.team, &metrics.coach_metrics), tp.time_secs, tp.share_pct
+                team_label(tp.team, &metrics.coach_metrics),
+                tp.time_secs,
+                tp.share_pct
             ));
             report.push_str("  Thirds:");
             for third in [
@@ -269,14 +281,17 @@ pub fn generate_text_report(
             crate::metrics::coach::TeamId::TeamB,
         ] {
             let n = ma.crossing.by_team.get(&team).copied().unwrap_or(0);
-            report.push_str(&format!("- {}: {} crosses\n", team_label(team, &metrics.coach_metrics), n));
+            report.push_str(&format!(
+                "- {}: {} crosses\n",
+                team_label(team, &metrics.coach_metrics),
+                n
+            ));
         }
         report.push('\n');
         report.push_str("  Time  | Team       | Side  | Origin        | Atk/Def | Zones\n");
         report.push_str("  ──────|────────────|───────|───────────────|─────────|──────\n");
         for ev in ma.crossing.events.iter().take(20) {
-            let mut zones: Vec<String> =
-                ev.attacker_zones.iter().map(|z| z.to_string()).collect();
+            let mut zones: Vec<String> = ev.attacker_zones.iter().map(|z| z.to_string()).collect();
             zones.sort();
             report.push_str(&format!(
                 "  {:>5.1}s| {:<10}| {:<6}| {:>5.1},{:>5.1}  |  {} vs {}  | {}\n",
@@ -333,12 +348,8 @@ pub fn generate_text_report(
         report.push_str(
             "Composite: low activity (30%), low speed (20%), turnovers (25%), 1v1 losses (25%).\n\n",
         );
-        report.push_str(
-            "  Rank | ID   | Team       | Weak | Turnovers | Duel loss | Notes\n",
-        );
-        report.push_str(
-            "  ─────|──────|────────────|──────|───────────|───────────|──────\n",
-        );
+        report.push_str("  Rank | ID   | Team       | Weak | Turnovers | Duel loss | Notes\n");
+        report.push_str("  ─────|──────|────────────|──────|───────────|───────────|──────\n");
         for (i, w) in ma.weakest_players.iter().take(10).enumerate() {
             let team = w
                 .team

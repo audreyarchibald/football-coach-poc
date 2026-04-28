@@ -57,6 +57,42 @@ pub fn show(app: &mut CoachApp, ui: &mut egui::Ui) {
             }
 
             ui.add_space(8.0);
+            ui.label(egui::RichText::new("Live Watch").strong());
+            ui.add_enabled_ui(!app.live_mode.enabled, |ui| {
+                let selected_label = app
+                    .live_mode
+                    .sources
+                    .get(app.live_source_index)
+                    .map(|source| source.label.as_str())
+                    .unwrap_or("No source");
+                egui::ComboBox::from_id_salt("live_capture_source")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        for (idx, source) in app.live_mode.sources.iter().enumerate() {
+                            ui.selectable_value(&mut app.live_source_index, idx, &source.label);
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    ui.label("Detect every N frames:");
+                    ui.add(egui::DragValue::new(&mut app.live_detection_stride).range(1..=10));
+                });
+            });
+
+            let live = &app.live_mode.stats;
+            ui.label(
+                egui::RichText::new(format!(
+                    "Frames {} | Screen FPS {:.1} | Players {} | Tracked {} | Ball {}",
+                    live.frames_processed,
+                    live.inferred_fps,
+                    live.current_players_visible,
+                    live.current_tracked_players,
+                    if live.ball_visible { "seen" } else { "not seen" }
+                ))
+                .color(colors::TEXT_SECONDARY)
+                .small(),
+            );
+
+            ui.add_space(8.0);
             ui.label(egui::RichText::new("Library").strong());
             if app.library.items().is_empty() {
                 ui.label(
@@ -421,7 +457,11 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
     for shape in metrics.coach_metrics.team_shapes.values() {
         ui.label(format!(
             "{} | width {:.1}m | depth {:.1}m | line height {:.1}m | compactness {:.0} m²",
-            team_label(shape.team, &metrics.coach_metrics), shape.width_m, shape.depth_m, shape.line_height_m, shape.compactness_m2
+            team_label(shape.team, &metrics.coach_metrics),
+            shape.width_m,
+            shape.depth_m,
+            shape.line_height_m,
+            shape.compactness_m2
         ));
     }
 
@@ -431,7 +471,11 @@ fn show_coach_tab(app: &CoachApp, ui: &mut egui::Ui) {
         for (team, color) in &metrics.coach_metrics.team_colors {
             ui.label(format!(
                 "{} | rgb {:.2}/{:.2}/{:.2} | sat {:.2}",
-                team_label(*team, &metrics.coach_metrics), color.r, color.g, color.b, color.saturation
+                team_label(*team, &metrics.coach_metrics),
+                color.r,
+                color.g,
+                color.b,
+                color.saturation
             ));
         }
     }
@@ -644,6 +688,7 @@ fn show_tracking_tab(app: &mut CoachApp, ui: &mut egui::Ui) {
                     ui.label(egui::RichText::new("Dist (m)").strong());
                     ui.label(egui::RichText::new("Avg km/h").strong());
                     ui.label(egui::RichText::new("Max km/h").strong());
+                    ui.label(egui::RichText::new("Touches").strong());
                     ui.end_row();
 
                     let mut players: Vec<_> = metrics.player_metrics.values().collect();
@@ -655,6 +700,7 @@ fn show_tracking_tab(app: &mut CoachApp, ui: &mut egui::Ui) {
                         ui.label(format!("{:.1}", p.total_distance_m));
                         ui.label(format!("{:.1}", p.avg_speed_kmh));
                         ui.label(format!("{:.1}", p.max_speed_kmh));
+                        ui.label(format!("{}", p.touches));
                         ui.end_row();
                     }
                 });
@@ -840,10 +886,7 @@ fn show_possession_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut eg
         }
 
         // Possession share bar
-        ui.label(format!(
-            "Total sampled: {:.1}s",
-            poss.total_sampled_secs
-        ));
+        ui.label(format!("Total sampled: {:.1}s", poss.total_sampled_secs));
         ui.add_space(4.0);
 
         let team_a = poss.teams.iter().find(|t| t.team == TeamId::TeamA);
@@ -900,7 +943,11 @@ fn show_possession_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut eg
             // Thirds
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Thirds:").color(colors::TEXT_SECONDARY));
-                for third in [PitchThird::Defensive, PitchThird::Middle, PitchThird::Attacking] {
+                for third in [
+                    PitchThird::Defensive,
+                    PitchThird::Middle,
+                    PitchThird::Attacking,
+                ] {
                     let t = tp.third_time_secs.get(&third).copied().unwrap_or(0.0);
                     ui.label(format!("{} {:.1}s", third, t));
                 }
@@ -1015,8 +1062,7 @@ fn show_running_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui:
         let r = &ma.running;
         if r.players.is_empty() {
             ui.label(
-                egui::RichText::new("No running data available.")
-                    .color(colors::TEXT_SECONDARY),
+                egui::RichText::new("No running data available.").color(colors::TEXT_SECONDARY),
             );
             return;
         }
@@ -1057,9 +1103,7 @@ fn show_running_section(ma: &MatchAnalysis, coach: &CoachMetrics, ui: &mut egui:
                         Some(t) => ui.label(
                             egui::RichText::new(team_label(t, coach)).color(team_color(t, coach)),
                         ),
-                        None => ui.label(
-                            egui::RichText::new("—").color(colors::TEXT_SECONDARY),
-                        ),
+                        None => ui.label(egui::RichText::new("—").color(colors::TEXT_SECONDARY)),
                     };
                     ui.label(format!("{:.0}", p.total_distance_m));
                     ui.label(format!("{:.1}", p.high_speed_run_secs));
@@ -1232,7 +1276,9 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
     let cell_size = egui::vec2(cell_w, cell_h);
 
     let texture = app.frame_texture.as_ref();
-    let tex_size = texture.map(|t| t.size_vec2()).unwrap_or(egui::vec2(1.0, 1.0));
+    let tex_size = texture
+        .map(|t| t.size_vec2())
+        .unwrap_or(egui::vec2(1.0, 1.0));
 
     // Find the current frame's tracks
     let frame_idx = app.current_frame().map(|f| f.index);
@@ -1257,10 +1303,7 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
     let weakest_id = weakest.map(|w| w.track_id);
     let weakest_bbox = frame_tracks.and_then(|ft| {
         let id = weakest_id?;
-        ft.tracks
-            .iter()
-            .find(|t| t.track_id == id)
-            .map(|t| t.bbox)
+        ft.tracks.iter().find(|t| t.track_id == id).map(|t| t.bbox)
     });
 
     let coach = app.metrics.as_ref().map(|m| &m.coach_metrics);
@@ -1308,7 +1351,9 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         let uv = ball_bbox
             .map(|b| bbox_to_uv(b, tex_size, 4.0))
-            .unwrap_or_else(|| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)));
+            .unwrap_or_else(|| {
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+            });
         draw_frame_cell(
             ui,
             cell_size,
@@ -1331,7 +1376,9 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let uv = weakest_bbox
             .map(|b| bbox_to_uv(b, tex_size, 3.0))
-            .unwrap_or_else(|| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)));
+            .unwrap_or_else(|| {
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+            });
         draw_frame_cell(
             ui,
             cell_size,
@@ -1349,23 +1396,14 @@ fn show_four_view_tab(app: &CoachApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         // Pitch map cell
-        ui.allocate_ui_with_layout(
-            cell_size,
-            egui::Layout::top_down(egui::Align::LEFT),
-            |ui| {
-                ui.label(
-                    egui::RichText::new("Top-down pitch")
-                        .color(colors::TEXT_SECONDARY)
-                        .small(),
-                );
-                super::pitch_overlay::draw_pitch_overlay(
-                    ui,
-                    frame_tracks,
-                    app.mapper.as_ref(),
-                    coach,
-                );
-            },
-        );
+        ui.allocate_ui_with_layout(cell_size, egui::Layout::top_down(egui::Align::LEFT), |ui| {
+            ui.label(
+                egui::RichText::new("Top-down pitch")
+                    .color(colors::TEXT_SECONDARY)
+                    .small(),
+            );
+            super::pitch_overlay::draw_pitch_overlay(ui, frame_tracks, app.mapper.as_ref(), coach);
+        });
     });
 }
 
@@ -1375,11 +1413,7 @@ struct Highlight {
     weakest_id: Option<u32>,
 }
 
-fn bbox_to_uv(
-    bbox: crate::detection::BBox,
-    tex_size: egui::Vec2,
-    pad_factor: f32,
-) -> egui::Rect {
+fn bbox_to_uv(bbox: crate::detection::BBox, tex_size: egui::Vec2, pad_factor: f32) -> egui::Rect {
     let cx = (bbox.x1 + bbox.x2) * 0.5;
     let cy = (bbox.y1 + bbox.y2) * 0.5;
     let w = (bbox.x2 - bbox.x1).abs().max(10.0) * pad_factor;

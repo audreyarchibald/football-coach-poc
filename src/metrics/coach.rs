@@ -174,7 +174,11 @@ pub fn color_signature_name(c: &ColorSignature) -> &'static str {
         return if lightness < 0.35 { "Maroon" } else { "Red" };
     }
     if g_dom {
-        return if lightness < 0.35 { "Dark Green" } else { "Green" };
+        return if lightness < 0.35 {
+            "Dark Green"
+        } else {
+            "Green"
+        };
     }
     if b_dom {
         return if lightness < 0.35 {
@@ -347,7 +351,7 @@ fn assign_teams(
     player_positions: &HashMap<u32, Vec<TimedPosition>>,
     color_signatures: &HashMap<u32, Vec<ColorSignature>>,
 ) -> HashMap<u32, TeamId> {
-    let mut track_features: Vec<(u32, f32, f32, f64)> = player_positions
+    let mut color_features: Vec<(u32, f32, f32, f64)> = player_positions
         .iter()
         .filter_map(|(&track_id, positions)| {
             let avg_x = positions.iter().map(|p| p.pitch_pos.x).sum::<f64>()
@@ -357,16 +361,46 @@ fn assign_teams(
         })
         .collect();
 
-    if track_features.len() < 2 {
+    if color_features.len() >= 4 {
+        color_features.sort_by(|a, b| {
+            let lhs = a.1 + a.2 * 0.45;
+            let rhs = b.1 + b.2 * 0.45;
+            lhs.total_cmp(&rhs)
+        });
+        return split_team_features(color_features);
+    }
+
+    let mut position_features: Vec<(u32, f32, f32, f64)> = player_positions
+        .iter()
+        .filter_map(|(&track_id, positions)| {
+            if positions.len() < 2 {
+                return None;
+            }
+            let avg_x =
+                positions.iter().map(|p| p.pitch_pos.x).sum::<f64>() / positions.len() as f64;
+            let avg_y =
+                positions.iter().map(|p| p.pitch_pos.y).sum::<f64>() / positions.len() as f64;
+            Some((track_id, avg_x as f32, avg_y as f32, avg_x))
+        })
+        .collect();
+
+    if position_features.len() < 2 {
         return HashMap::new();
     }
 
-    track_features.sort_by(|a, b| {
-        let lhs = a.1 + a.2 * 0.45;
-        let rhs = b.1 + b.2 * 0.45;
-        lhs.total_cmp(&rhs)
+    position_features.sort_by(|a, b| {
+        let x_order = a.1.total_cmp(&b.1);
+        if x_order == std::cmp::Ordering::Equal {
+            a.2.total_cmp(&b.2)
+        } else {
+            x_order
+        }
     });
 
+    split_team_features(position_features)
+}
+
+fn split_team_features(track_features: Vec<(u32, f32, f32, f64)>) -> HashMap<u32, TeamId> {
     let split = track_features.len() / 2;
     let mut assignments = HashMap::new();
     for (idx, (track_id, _, _, avg_x)) in track_features.into_iter().enumerate() {

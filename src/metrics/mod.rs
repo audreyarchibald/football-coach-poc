@@ -59,13 +59,19 @@ pub fn compute_all_metrics(
     log::info!("Computing metrics...");
 
     let player_positions = extract_player_positions(tracking, mapper);
-    let player_metrics = movement::compute_movement_metrics(&player_positions, fps);
+    let mut player_metrics = movement::compute_movement_metrics(&player_positions, fps);
     let ball_possessions = possession::compute_possession(tracking, mapper);
-    let pressing_events = pressing::compute_pressing(tracking, mapper);
+    for event in &ball_possessions {
+        if let Some(player) = player_metrics.get_mut(&event.player_track_id) {
+            player.touches += 1;
+        }
+    }
     let heatmap_data = heatmap::compute_heatmap(&player_positions);
     let (player_area_occupancy, dominant_areas) = compute_area_occupancy(&player_positions);
     let coach_metrics =
         coach::compute_coach_metrics(tracking, mapper, frames, &player_positions, &dominant_areas);
+    let pressing_events =
+        pressing::compute_pressing(tracking, mapper, &coach_metrics.team_assignments);
     let match_analysis = match_analysis::compute_match_analysis(
         tracking,
         mapper,

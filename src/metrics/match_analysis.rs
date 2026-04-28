@@ -103,9 +103,7 @@ fn classify_lane(p: &Point2D) -> PitchLane {
     }
 }
 
-fn compute_possession(
-    contexts: &[crate::metrics::coach::PossessionContext],
-) -> PossessionAnalysis {
+fn compute_possession(contexts: &[crate::metrics::coach::PossessionContext]) -> PossessionAnalysis {
     if contexts.is_empty() {
         return PossessionAnalysis {
             total_sampled_secs: 0.0,
@@ -397,8 +395,9 @@ fn compute_crossing(
             } else {
                 ball_pos.x
             };
-            let in_box =
-                dist_from_goal >= 0.0 && dist_from_goal <= PENALTY_AREA_DEPTH && y_off.abs() <= PENALTY_AREA_WIDTH / 2.0;
+            let in_box = dist_from_goal >= 0.0
+                && dist_from_goal <= PENALTY_AREA_DEPTH
+                && y_off.abs() <= PENALTY_AREA_WIDTH / 2.0;
             if !in_box {
                 continue;
             }
@@ -479,7 +478,16 @@ fn infer_attacking_direction(
     // The team with higher average x attacks +x (right); the other attacks left.
     let means: Vec<(TeamId, f64)> = sum_x
         .iter()
-        .map(|(t, (s, n))| (*t, if *n > 0 { s / *n as f64 } else { PITCH_LENGTH / 2.0 }))
+        .map(|(t, (s, n))| {
+            (
+                *t,
+                if *n > 0 {
+                    s / *n as f64
+                } else {
+                    PITCH_LENGTH / 2.0
+                },
+            )
+        })
         .collect();
     if means.len() == 2 {
         let (a, b) = (means[0], means[1]);
